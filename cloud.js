@@ -6,7 +6,75 @@ favorite=async id=>{if(id.startsWith('demo-')){alert('Sample listing — not ava
 removePart=async id=>{if(!requireUser()||!confirm('Delete this listing?'))return;try{const p=parts.find(x=>x.id===id);unwrap(await db.from('listings').delete().eq('id',id).eq('user_id',user.id));if(p?.photo_path)await db.storage.from('listing-photos').remove([p.photo_path]);detail.close();await refresh()}catch(e){fail(e)}};
 deleteCar=async id=>{if(!requireUser()||!confirm('Remove this vehicle?'))return;try{const c=cars.find(x=>x.id===id);unwrap(await db.from('garage').delete().eq('id',id).eq('user_id',user.id));if(c?.photo_path)await db.storage.from('garage-photos').remove([c.photo_path]);await refresh()}catch(e){fail(e)}};
 async function save(e,bucket,table,fields,old){e.preventDefault();if(!requireUser())return;const uid=user.id,f=new FormData(e.target),button=e.target.querySelector('button.primary:last-of-type')||e.submitter;const submit=e.target.querySelector('button:not([type])');if(submit)submit.disabled=true;if(e.target.dataset.saving)return;e.target.dataset.saving='1';let path=null,committed=false,extra=[];try{path=await upload(bucket,f.get('photo'),uid);if(table==='listings'){const files=f.getAll('extraPhotos').filter(x=>x.size);if(files.length>5)throw Error('Choose up to five additional photos');for(const file of files)extra.push(await upload(bucket,file,uid));}const row=Object.fromEntries(fields.map(k=>[k,String(f.get(k)||'').trim()]));row.user_id=uid;if(path||old?.photo_path)row.photo_path=path||old.photo_path;if(table==='garage')row.year=Number(row.year);else {row.price=Number(row.price);row.extra_photos=extra;}if(old)unwrap(await db.from(table).update(row).eq('id',old.id).eq('user_id',uid).select('id').single());else unwrap(await db.from(table).insert(row));committed=true;if(path&&old?.photo_path)await db.storage.from(bucket).remove([old.photo_path]);e.target.reset();e.target.closest('dialog').close();await refresh()}catch(err){if(!committed&&(path||extra.length))await db.storage.from(bucket).remove([path,...extra].filter(Boolean));alert(err.message)}finally{delete e.target.dataset.saving;if(submit)submit.disabled=false}}
-$('listing').onsubmit=e=>save(e,'listing-photos','listings',['title','price','brand','category','fitment','condition','description']);$('carForm').onsubmit=e=>save(e,'garage-photos','garage',['year','make','model','trim','engine'],cars.find(c=>c.id===editing));document.querySelectorAll('button[onclick="sell.showModal()"]').forEach(b=>{b.onclick=()=>{if(requireUser())sell.showModal()}});
+const listingForm = $('listing');
+const listingFields = ['title', 'price', 'brand', 'category', 'fitment', 'condition', 'description'];
+const listingSubmit = listingForm.querySelector('button.primary');
+const listingHeading = listingForm.querySelector('h2');
+const listingPhotos = listingForm.querySelector('[name=photo]').closest('label');
+let listingEdit = null;
+
+function openListingForm(listing = null) {
+  listingEdit = listing;
+  listingForm.reset();
+  listingHeading.textContent = listing ? 'Edit listing' : 'Sell a part';
+  listingSubmit.textContent = listing ? 'Save changes' : 'Publish listing';
+  listingPhotos.hidden = Boolean(listing);
+  const price = listingForm.elements.namedItem('price');
+  price.disabled = Boolean(listing?.original_price);
+  price.title = price.disabled ? 'Use the sale controls to change the active sale price.' : '';
+  if (listing) {
+    for (const field of listingFields) {
+      const input = listingForm.elements.namedItem(field);
+      const value = String(listing[field] ?? '');
+      if (input.tagName === 'SELECT' && !Array.from(input.options).some(option => option.value === value)) {
+        const option = new Option(value, value);
+        option.dataset.legacy = 'true';
+        input.add(option);
+      }
+      input.value = value;
+    }
+  }
+  sell.showModal();
+}
+
+sell.addEventListener('close', () => {
+  listingEdit = null;
+  listingForm.querySelectorAll('option[data-legacy]').forEach(option => option.remove());
+});
+
+listingForm.onsubmit = async event => {
+  const listing = listingEdit;
+  if (!listing) return save(event, 'listing-photos', 'listings', listingFields);
+  event.preventDefault();
+  if (listingSubmit.disabled || user?.id !== listing.user_id) return;
+  const values = new FormData(listingForm);
+  const changes = Object.fromEntries(listingFields.filter(field => values.has(field))
+    .map(field => [field, String(values.get(field)).trim()]));
+  if ('price' in changes) changes.price = Number(changes.price);
+  listingSubmit.disabled = true;
+  try {
+    let update = db.from('listings').update(changes).eq('id', listing.id)
+      .eq('user_id', listing.user_id).eq('sold', false);
+    if ('price' in changes) update = update.is('original_price', null).eq('price', listing.price);
+    const updated = unwrap(await update.select('id').maybeSingle());
+    if (!updated) throw Error('This listing changed. Reopen it before editing.');
+    Object.assign(listing, changes);
+    if (listingEdit === listing) sell.close();
+    await refresh();
+    if (!product.hidden && user?.id === listing.user_id &&
+        product.querySelector('[data-edit-listing]')?.dataset.editListing === listing.id) {
+      await view(listing.id);
+    }
+  } catch (error) {
+    alert(error.message);
+  } finally {
+    listingSubmit.disabled = false;
+  }
+};
+$('carForm').onsubmit=e=>save(e,'garage-photos','garage',['year','make','model','trim','engine'],cars.find(c=>c.id===editing));
+document.querySelectorAll('button[onclick="sell.showModal()"]').forEach(button => {
+  button.onclick = () => { if (requireUser()) openListingForm(); };
+});
 const get=k=>{try{const rows=JSON.parse(localStorage.getItem(inventoryDemo?k+'-demo':k)||'[]');return Array.isArray(rows)?rows.filter(p=>inventoryDemo?true:!p.demo&&!/^demo-|^[1-4]$/.test(String(p.id))):[]}catch{return []}};
 const put=(k,v)=>localStorage.setItem(inventoryDemo?k+'-demo':k,JSON.stringify(v));
 const panel=document.createElement('section'),heading=document.createElement('h2'),content=document.createElement('div');
@@ -124,4 +192,20 @@ function sponsoredPreview(){show('Sponsored listings');line(content,'Featured de
 const featured=document.createElement('section');featured.className='featured-strip';const ft=document.createElement('strong');ft.textContent='Sponsored listings';featured.append(ft);const sub=document.createElement('small');sub.textContent='Demo placements';featured.append(sub);btn(featured,'View featured parts',sponsoredPreview);
 const priorViewSponsored=view;view=async id=>{await priorViewSponsored(id);const p=parts.find(x=>x.id===id);if(!p||p.demo||p.sold||p.user_id!==user?.id)return;const area=document.createElement('section');area.className='sale-editor';line(area,'Promote your listing');line(area,'Preview sponsored placement. Paid promotion is not active.');btn(area,'Preview promotion',()=>{show('Promotion preview');line(content,p.title);line(content,'Sponsored placement preview · no charge');btn(content,'Back to listing',()=>view(id))});document.getElementById('productPage').append(area)};
 const galleryView=view;let gallerySeq=0;view=async id=>{const seq=++gallerySeq;await galleryView(id);if(seq!==gallerySeq||product.hidden)return;const p=parts.find(x=>x.id===id);if(!p||p.demo)return;const result=await db.from('listings').select('photo_path,extra_photos').eq('id',id).maybeSingle();if(result.error||!result.data||seq!==gallerySeq||product.hidden)return;const paths=[result.data.photo_path,...result.data.extra_photos].filter(Boolean);if(paths.length<2)return;const target=product.querySelector('.product-photo');if(!target)return;const strip=document.createElement('div');strip.className='photo-strip';strip.setAttribute('aria-label','Listing photos');for(const [i,path] of paths.entries()){const img=document.createElement('img');img.src=db.storage.from('listing-photos').getPublicUrl(path).data.publicUrl;img.alt='Part photo '+(i+1);img.loading=i?'lazy':'eager';strip.append(img)}const controls=document.createElement('div');controls.className='photo-controls';paths.forEach((_,i)=>btn(controls,String(i+1),()=>strip.scrollTo({left:i*strip.clientWidth,behavior:'smooth'})));target.replaceChildren(strip,controls)};async function communityBuilds(){show('Community builds');const target=document.createElement('div');content.append(target);btn(target,'Publish a build',()=>{if(!requireUser())return;const form=document.createElement('form');const title=document.createElement('input'),vehicle=document.createElement('input'),description=document.createElement('textarea'),submit=document.createElement('button'),status=document.createElement('p');title.placeholder='Build name';title.maxLength=60;title.required=true;vehicle.placeholder='Year, make and model';vehicle.maxLength=120;vehicle.required=true;description.placeholder='Describe your modifications';description.maxLength=1500;submit.textContent='Publish publicly';line(form,'Only the text entered here will be public. Do not include your VIN, address or plate number.');form.append(title,vehicle,description,submit,status);target.prepend(form);form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{unwrap(await db.from('community_builds').insert({title:title.value.trim(),vehicle:vehicle.value.trim(),description:description.value.trim()}));await communityBuilds()}catch(e){status.textContent=e.message;submit.disabled=false}}});const rows=unwrap(await db.from('community_builds').select('*').order('created_at',{ascending:false}).limit(50));if(!target.isConnected)return;if(!rows.length)line(target,'Be the first to share your build.');for(const b of rows){const card=document.createElement('article');card.className='community-build';const title=document.createElement('h3');title.textContent=b.title;card.append(title);line(card,b.vehicle);line(card,b.description);btn(card,'View creator',()=>sellerProfile(b.owner));if(user?.id===b.owner)btn(card,'Remove build',async()=>{if(!confirm('Remove this public build?'))return;unwrap(await db.from('community_builds').delete().eq('id',b.id).eq('owner',user.id));await communityBuilds()});target.append(card)}}btn(bar,'Community',communityBuilds);const reportView=view;view=async id=>{await reportView(id);const p=parts.find(x=>x.id===id);if(!p||p.demo||p.user_id===user?.id||product.hidden)return;const area=document.createElement('section');btn(area,'Report listing',()=>{if(!requireUser())return;const form=document.createElement('form');const reason=document.createElement('select');reason.setAttribute('aria-label','Report reason');for(const r of ['suspected scam','prohibited item','misleading listing','other'])reason.add(new Option(r,r));const details=document.createElement('textarea');details.maxLength=1000;details.placeholder='Optional details';const submit=document.createElement('button');submit.textContent='Submit report';const status=document.createElement('p');form.append(reason,details,submit,status);area.replaceChildren(form);form.onsubmit=async e=>{e.preventDefault();submit.disabled=true;try{unwrap(await db.from('listing_reports').insert({listing_id:id,reason:reason.value,details:details.value.trim()}));area.textContent='Report submitted. It is not an automatic removal.'}catch(e){status.textContent=e.message;submit.disabled=false}}});product.append(area)};$('modelFilter')?.addEventListener('change',()=>page(true));$('brand').addEventListener('change',()=>page(true));$('category').addEventListener('change',()=>page(true));window.refreshMarketplace=async()=>{cache.clear();clearTimeout(timer);return await page(true)};window.loadNextMarketplace=()=>page();
+const editListingView = view;
+let editListingViewSequence = 0;
+view = async id => {
+  const sequence = ++editListingViewSequence;
+  await editListingView(id);
+  if (sequence !== editListingViewSequence || product.hidden) return;
+  const item = parts.find(part => part.id === id);
+  if (!item || item.demo || item.sold || item.user_id !== user?.id) return;
+  const info = product.querySelector('.product-info');
+  if (!info) return;
+  const edit = btn(info, 'Edit listing', () => {
+    if (user?.id === item.user_id) openListingForm(item);
+  });
+  edit.dataset.editListing = id;
+};
+
 })();
