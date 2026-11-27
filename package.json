@@ -1,0 +1,17 @@
+{
+  "name": "parts-plug",
+  "version": "0.1.0",
+  "private": true,
+  "description": "PartsPlug marketplace prototype and local VIN/garage API",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.0.0",
+    "express": "^5.0.0"
+  }
+}
