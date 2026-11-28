@@ -83,7 +83,7 @@ function line(parent,t){const p=document.createElement('p');p.textContent=t;pare
 panel.id='marketPage';panel.hidden=true;panel.close=()=>{panel.hidden=true;$('market').hidden=false};btn(panel,'← Back to marketplace',()=>panel.close());panel.append(heading,content);document.querySelector('main').append(panel);
 function show(t){document.getElementById('productPage')?.setAttribute('hidden','');heading.textContent=t;content.replaceChildren();$('market').hidden=true;$('garagePanel').hidden=true;panel.hidden=false;window.scrollTo(0,0)}
 function snap(p){return {id:p.id,title:p.title,price:p.price,demo:!!p.demo,category:p.category,brand:p.brand,fitment:p.fitment}}
-function list(k,t,rows=get(k)){show(t);const cart=k==='pp-cart';if(cart)warmStripe(rows);if(!rows.length){line(content,cart?'Your cart is empty.':'Nothing here yet.');btn(content,'Browse parts',()=>panel.close());return}const layout=document.createElement('div');layout.className='cart-layout';const items=document.createElement('div');items.className='cart-items';layout.append(items);content.append(layout);for(const p of rows){const item=document.createElement('article');item.className='cart-item';const im=document.createElement('div');im.className='photo cart-photo';const details=document.createElement('div');details.className='cart-details';const title=document.createElement('strong');title.textContent=p.title;details.append(title);line(details,'$'+Number(p.price).toFixed(2)+(p.demo?' · Demo':''));const state=document.createElement('small');details.append(state);item.append(im,details);items.append(item);let current=parts.find(x=>x.id===p.id)||(p.demo?samples.find(x=>x.id===p.id):null);function update(row){if(!row)return;current=row;im.innerHTML=photo(row);state.textContent=row.sold?'Sold · no longer available':row.condition||''}if(current)update(current);else im.textContent='Loading photo…';if(!p.demo)db.from('listings').select('*').eq('id',p.id).maybeSingle().then(({data,error})=>{if(!item.isConnected)return;if(error||!data){state.textContent='Listing unavailable';im.textContent='No photo';return}update({...data,photo:data.photo_path?db.storage.from('listing-photos').getPublicUrl(data.photo_path).data.publicUrl:''})}).catch(()=>{im.textContent='Photo unavailable'});const actions=document.createElement('div');actions.className='cart-actions';details.append(actions);btn(actions,'View item',()=>{if(!current){state.textContent='Listing unavailable';return}parts=[...parts.filter(x=>x.id!==p.id),current];view(p.id)});btn(actions,'Remove',()=>{put(k,get(k).filter(x=>x.id!==p.id));list(k,t)})}if(cart){const summary=document.createElement('aside');summary.className='cart-summary';const h=document.createElement('h3');h.textContent='Order summary';summary.append(h);line(summary,rows.length+' item'+(rows.length===1?'':'s'));line(summary,'Subtotal: $'+rows.reduce((a,p)=>a+Number(p.price),0).toFixed(2));line(summary,'Shipping and tax calculated separately');btn(summary,'Checkout',()=>openCheckout(rows)).classList.add('primary');layout.append(summary)}}
+function list(k,t,rows=get(k)){show(t);const cart=k==='pp-cart';if(cart&&user)warmStripe(rows);if(!rows.length){line(content,cart?'Your cart is empty.':'Nothing here yet.');btn(content,'Browse parts',()=>panel.close());return}const layout=document.createElement('div');layout.className='cart-layout';const items=document.createElement('div');items.className='cart-items';layout.append(items);content.append(layout);for(const p of rows){const item=document.createElement('article');item.className='cart-item';const im=document.createElement('div');im.className='photo cart-photo';const details=document.createElement('div');details.className='cart-details';const title=document.createElement('strong');title.textContent=p.title;details.append(title);line(details,'$'+Number(p.price).toFixed(2)+(p.demo?' · Demo':''));const state=document.createElement('small');details.append(state);item.append(im,details);items.append(item);let current=parts.find(x=>x.id===p.id)||(p.demo?samples.find(x=>x.id===p.id):null);function update(row){if(!row)return;current=row;im.innerHTML=photo(row);state.textContent=row.sold?'Sold · no longer available':row.condition||''}if(current)update(current);else im.textContent='Loading photo…';if(!p.demo)db.from('listings').select('*').eq('id',p.id).maybeSingle().then(({data,error})=>{if(!item.isConnected)return;if(error||!data){state.textContent='Listing unavailable';im.textContent='No photo';return}update({...data,photo:data.photo_path?db.storage.from('listing-photos').getPublicUrl(data.photo_path).data.publicUrl:''})}).catch(()=>{im.textContent='Photo unavailable'});const actions=document.createElement('div');actions.className='cart-actions';details.append(actions);btn(actions,'View item',()=>{if(!current){state.textContent='Listing unavailable';return}parts=[...parts.filter(x=>x.id!==p.id),current];view(p.id)});btn(actions,'Remove',()=>{put(k,get(k).filter(x=>x.id!==p.id));list(k,t)})}if(cart){const summary=document.createElement('aside');summary.className='cart-summary';const h=document.createElement('h3');h.textContent='Order summary';summary.append(h);line(summary,rows.length+' item'+(rows.length===1?'':'s'));line(summary,'Subtotal: $'+rows.reduce((a,p)=>a+Number(p.price),0).toFixed(2));line(summary,'Shipping and tax calculated separately');btn(summary,'Checkout',()=>openCheckout(rows)).classList.add('primary');layout.append(summary)}}
 const bookmarkWrites = new Set();
 function hasBookmark(id) {
   return !inventoryDemo && user ? saved.includes(id) : get('pp-item-saves').some(part => part.id === id);
@@ -249,10 +249,10 @@ let stripeWarm = null;
 let stripeScriptPromise = null;
 let embeddedCheckout = null;
 
-function warmStripe(rows) {
-  if (!inventoryDemo || !user || !rows.length || !rows.every(part => part.demo)) return null;
+function warmStripe(rows, endpoint = user ? 'demo-stripe-checkout' : 'guest-demo-checkout') {
+  if (!inventoryDemo || !rows.length || !rows.every(part => part.demo)) return null;
   const ids = rows.map(part => part.id).sort();
-  const key = user.id + ':' + ids.join(',');
+  const key = (user?.id ?? 'guest') + ':' + ids.join(',');
   if (stripeWarm?.key === key && Date.now() - stripeWarm.time < 300000) return stripeWarm.promise;
   const promise = (async () => {
     if (!window.Stripe) {
@@ -269,7 +269,7 @@ function warmStripe(rows) {
       });
       await stripeScriptPromise;
     }
-    const {data, error} = await db.functions.invoke('demo-stripe-checkout', {body: {ids, embedded: true}});
+    const {data, error} = await db.functions.invoke(endpoint, {body: {ids, embedded: true}});
     if (error || !data?.publishableKey?.startsWith('pk_test_') || !data.clientSecret?.startsWith('cs_test_')) {
       throw Error('Stripe test checkout could not start.');
     }
@@ -282,7 +282,6 @@ function warmStripe(rows) {
 
 async function openCheckout(rows) {
   const demoCheckout = inventoryDemo && rows.length && rows.every(part => part.demo);
-  if (demoCheckout && !requireUser()) return;
   show('Checkout');
   btn(content, 'Back to cart', () => list('pp-cart', 'Shopping cart'));
   if (!demoCheckout) {
@@ -290,15 +289,16 @@ async function openCheckout(rows) {
     return;
   }
 
-  const uid = user.id;
+  const uid = user?.id;
+  const endpoint = uid ? 'demo-stripe-checkout' : 'guest-demo-checkout';
   line(content, 'Stripe test checkout · use test card details only');
   const status = document.createElement('p');
   status.setAttribute('role', 'status');
   status.textContent = 'Loading secure payment form…';
   const mount = document.createElement('div');
   content.append(status, mount);
-  const active = () => mount.isConnected && !panel.hidden && user?.id === uid;
-  const session = warmStripe(rows);
+  const active = () => mount.isConnected && !panel.hidden && (!uid || user?.id === uid);
+  const session = warmStripe(rows, endpoint);
   if (stripeWarm?.promise === session) stripeWarm = null;
 
   try {
@@ -326,11 +326,21 @@ async function openCheckout(rows) {
     observer.observe(panel, {attributes: true, attributeFilter: ['hidden']});
   } catch {
     if (!active()) return;
-    status.textContent = 'The payment form could not load.';
+    status.textContent = 'Stripe test mode is unavailable. You can simulate checkout here.';
+    const total = rows.reduce((sum, part) => sum + Number(part.price), 0);
+    const simulate = btn(content, 'Simulate payment · $' + total.toFixed(2), () => {
+      if (!active()) return;
+      const purchased = new Set(rows.map(part => part.id));
+      put('pp-cart', get('pp-cart').filter(part => !purchased.has(part.id)));
+      show('Demo checkout complete');
+      line(content, 'Simulated total: $' + total.toFixed(2) + '. No payment was made.');
+      btn(content, 'Continue shopping', () => panel.close());
+    });
+    simulate.className = 'primary';
     const hosted = btn(content, 'Open Stripe test checkout', async () => {
       hosted.disabled = true;
       try {
-        const {data, error} = await db.functions.invoke('demo-stripe-checkout', {
+        const {data, error} = await db.functions.invoke(endpoint, {
           body: {ids: rows.map(part => part.id)}
         });
         if (!active()) return;
