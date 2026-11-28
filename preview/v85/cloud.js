@@ -286,7 +286,7 @@ async function openCheckout(rows) {
   show('Checkout');
   btn(content, 'Back to cart', () => list('pp-cart', 'Shopping cart'));
   if (!demoCheckout) {
-    line(content, 'Live checkout is awaiting Stripe activation.');
+    line(content, 'Live payments for marketplace listings are not available yet.');
     return;
   }
 
